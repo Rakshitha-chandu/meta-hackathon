@@ -1,0 +1,82 @@
+name: incident-response-env
+version: "1.0.0"
+description: >
+  A multi-task OpenEnv environment simulating production incident response.
+  An AI agent acts as an on-call engineer — investigating alerts, diagnosing
+  root causes, and applying the correct remediation across three difficulty levels.
+
+author: your-hf-username
+license: MIT
+
+tasks:
+  - id: easy
+    name: Single Service Crash
+    description: One microservice has crashed. Agent must identify and restart it.
+    difficulty: easy
+    max_steps: 10
+    passing_score: 0.5
+
+  - id: medium
+    name: Cascading Failure from Bad Deploy
+    description: A bad deployment caused cascading failures. Agent must rollback.
+    difficulty: medium
+    max_steps: 10
+    passing_score: 0.5
+
+  - id: hard
+    name: Multi-System Incident with Noise
+    description: >
+      Database overload with noisy unrelated alerts.
+      Agent must filter noise and identify real root cause.
+    difficulty: hard
+    max_steps: 10
+    passing_score: 0.5
+
+observation_space:
+  type: object
+  fields:
+    - name: step
+      type: integer
+    - name: services
+      type: array
+    - name: alerts
+      type: array
+    - name: recent_logs
+      type: object
+    - name: last_action_result
+      type: string
+    - name: actions_remaining
+      type: integer
+    - name: done
+      type: boolean
+
+action_space:
+  type: object
+  fields:
+    - name: name
+      type: string
+      enum:
+        - check_logs
+        - check_metrics
+        - restart_service
+        - rollback_deploy
+        - scale_up
+        - escalate
+        - notify_team
+    - name: target
+      type: string
+      required: false
+    - name: message
+      type: string
+      required: false
+
+reward_range:
+  min: -1.0
+  max: 1.0
+
+tags:
+  - incident-response
+  - sre
+  - multi-task
+  - real-world
+  - agentic
