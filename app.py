@@ -54,7 +54,7 @@ def health():
 
 
 @app.post("/reset")
-def reset(request: Optional[ResetRequest] = None, task: str = Query(default="easy")):
+def reset(request: Optional[ResetRequest] = None, task: str = Query(default="easy")): # type: ignore
     """Start a fresh incident episode."""
     # Use body task if provided, else fall back to query param
     actual_task = (request.task if request else None) or task
