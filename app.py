@@ -54,24 +54,26 @@ def health():
 
 
 @app.post("/reset")
-def reset(request: ResetRequest):
+def reset(request: Optional[ResetRequest] = None, task: str = Query(default="easy")):
     """Start a fresh incident episode."""
-    if request.task not in ["easy", "medium", "hard"]:
+    # Use body task if provided, else fall back to query param
+    actual_task = (request.task if request else None) or task
+    
+    if actual_task not in ["easy", "medium", "hard"]:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid task: {request.task}. Choose from: easy, medium, hard"
+            detail=f"Invalid task: {actual_task}. Choose from: easy, medium, hard"
         )
 
-    env = IncidentResponseEnv(task=request.task, max_steps=10)
+    env = IncidentResponseEnv(task=actual_task, max_steps=10)
     obs = env.reset()
-    sessions[request.task] = env
+    sessions[actual_task] = env
 
     return {
         "observation": obs.model_dump(),
-        "task": request.task,
+        "task": actual_task,
         "message": "Episode started. Use /step to take actions."
     }
-
 
 @app.post("/step")
 def step(request: StepRequest):
