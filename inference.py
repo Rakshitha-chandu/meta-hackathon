@@ -1,35 +1,48 @@
 """
 inference.py — Baseline agent for Incident Response Commander
-Uses free Hugging Face Inference API via OpenAI-compatible client.
+Uses OpenAI-compatible client to call Hugging Face Inference API.
 
-Required environment variables:
-    API_BASE_URL   → https://router.huggingface.co/v1
-    MODEL_NAME     → Qwen/Qwen2.5-72B-Instruct
-    HF_TOKEN       → your Hugging Face token
+Required environment variables (no defaults):
+    HF_TOKEN       → Your Hugging Face API token (REQUIRED - no default)
+
+Default environment variables (can be overridden):
+    API_BASE_URL   → https://router.huggingface.co/v1 (default)
+    MODEL_NAME     → Qwen/Qwen2.5-72B-Instruct (default)
+
+Local image support (optional):
+    LOCAL_IMAGE_NAME → Local image name for from_docker_image() (optional)
 """
 
 import os
 import json
 import re
+import sys
 from openai import OpenAI
 from env.environment import IncidentResponseEnv
 from env.models import Action
 
-# ── Config ────────────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────────
+# Defaults ONLY for these two
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-API_KEY      = os.getenv("HF_TOKEN")
-MODEL_NAME   = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-MAX_STEPS    = 10
-TEMPERATURE  = 0.2
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
-if not API_KEY:
-    raise ValueError("HF_TOKEN environment variable not set.")
+# NO default for HF_TOKEN - must be set by user
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-# ── OpenAI-compatible client pointing at HF ───────────────────
+# Optional: Local image name
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+
+if not HF_TOKEN:
+    raise ValueError("HF_TOKEN environment variable is required but not set.")
+
+# ── Initialize OpenAI client ──────────────────────────────────
 client = OpenAI(
     base_url=API_BASE_URL,
-    api_key=API_KEY,
+    api_key=HF_TOKEN,
 )
+
+MAX_STEPS = 10
+TEMPERATURE = 0.2
 
 # ── System prompt ─────────────────────────────────────────────
 SYSTEM_PROMPT = """
@@ -118,53 +131,54 @@ def parse_action(response_text: str) -> Action:
         pass
 
     # Fallback if parsing fails
-    print(f"  ⚠️  Could not parse response: {response_text[:100]}")
     return Action(name="escalate", target="parse_error")
 
 
-# ── Run one episode ───────────────────────────────────────────
+# ── Run one episode with STRUCTURED LOGGING ───────────────────
 
 def run_episode(task: str) -> dict:
-    print(f"\n{'='*60}")
-    print(f"TASK: {task.upper()}")
-    print('='*60)
-
-    env          = IncidentResponseEnv(task=task, max_steps=MAX_STEPS)
-    obs          = env.reset()
+    """Run one episode with START/STEP/END structured logging format."""
+    env = IncidentResponseEnv(task=task, max_steps=MAX_STEPS)
+    obs = env.reset()
     step_history = []
     grade_result = None
 
-    print(f"Incident: {env._scenario['description']}")
-    print(f"Alerts  : {[a.message for a in obs.alerts]}")
-
+    # START MESSAGE
+    print(f"START: Running task={task}")
+    
     for step in range(1, MAX_STEPS + 1):
         # Build prompt
         prompt = build_prompt(obs, step_history)
 
-        # Call LLM
+        # Call LLM using OpenAI client
         try:
             completion = client.chat.completions.create(
                 model=MODEL_NAME,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": prompt},
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=TEMPERATURE,
                 max_tokens=100,
             )
             response_text = completion.choices[0].message.content or ""
         except Exception as e:
-            print(f"  ⚠️  LLM call failed: {e}")
             response_text = '{"action": "escalate", "target": "llm_error"}'
 
         # Parse action
         action = parse_action(response_text)
-        print(f"\n  Step {step}: LLM chose → {action.name}({action.target or action.message or ''})")
 
         # Step environment
         obs, reward, done, info = env.step(action)
-        print(f"  Result  : {obs.last_action_result}")
-        print(f"  Reward  : {reward.value} ({reward.reason})")
+
+        # STEP MESSAGE with structured format
+        action_str = f"{action.name}"
+        if action.target:
+            action_str += f"(target={action.target})"
+        elif action.message:
+            action_str += f"(message={action.message})"
+        
+        print(f"STEP {step}: action={action_str}, reward={reward.value}, reason={reward.reason}")
 
         # Track history for context
         step_history.append(
@@ -179,44 +193,38 @@ def run_episode(task: str) -> dict:
     # Force grade if episode didn't finish
     if not grade_result:
         from env.grader import IncidentGrader
-        grader       = IncidentGrader(env._scenario)
+        grader = IncidentGrader(env._scenario)
         grade_result = grader.grade(
             action_history=env._action_history,
             resolved=env._scenario.get("resolved", False)
         )
 
-    # Print final grade
-    print(f"\n── FINAL GRADE ────────────────────────────────")
-    print(f"  Score   : {grade_result['score']} / 1.0")
-    print(f"  Passed  : {'✅ YES' if grade_result['passed'] else '❌ NO'}")
-    print(f"  Feedback:")
-    for f in grade_result["feedback"]:
-        print(f"    {f}")
+    # END MESSAGE
+    print(f"END: task={task}, score={grade_result['score']}, passed={grade_result['passed']}")
 
     return grade_result
 
 
-# ── Main ──────────────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────
 
 def main():
-    print("🚨 Incident Response Commander — Baseline Agent")
-    print(f"   Model : {MODEL_NAME}")
-    print(f"   API   : {API_BASE_URL}")
+    print(f"START: Baseline agent initialization")
+    print(f"STEP 0: model={MODEL_NAME}, api_url={API_BASE_URL}")
 
     results = {}
     for task in ["easy", "medium", "hard"]:
         results[task] = run_episode(task)
 
-    # Summary
-    print(f"\n{'='*60}")
-    print("SUMMARY")
-    print('='*60)
-    total = 0
-    for task, result in results.items():
-        score  = result["score"]
-        passed = "✅" if result["passed"] else "❌"
-        print(f"  {task:<10} {passed}  {score} / 1.0")
-        total += score
+    # Final summary with structured format
+    total_score = sum(result["score"] for result in results.values())
+    avg_score = total_score / len(results)
+    
+    print(f"END: All tasks completed, average_score={avg_score}")
+
+
+if __name__ == "__main__":
+    main()
+
 
     avg = round(total / len(results), 3)
     print(f"\n  Average score: {avg} / 1.0")
