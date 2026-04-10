@@ -3,7 +3,7 @@ app.py — FastAPI server wrapping Incident Response Commander
 Exposes reset(), step(), state() as HTTP endpoints.
 """
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import json
@@ -31,12 +31,6 @@ class StepRequest(BaseModel):
     target: Optional[str] = None
     message: Optional[str] = None
 
-class ResetRequest(BaseModel):
-    task: Optional[str] = None
-    
-    class Config:
-        extra = "allow"  # Allow extra fields
-
 
 # ── Routes ────────────────────────────────────────────────────
 
@@ -58,10 +52,23 @@ def health():
 
 
 @app.post("/reset")
-def reset(request: Dict[str, Any] = Body(default={})):
+async def reset(request: Request):
     """Start a fresh incident episode."""
-    task = request.get("task", "easy") if isinstance(request, dict) else "easy"
-    
+    task = "easy"
+    body = {}
+
+    raw_body = await request.body()
+    if raw_body:
+        try:
+            body = json.loads(raw_body.decode("utf-8"))
+            if body is None:
+                body = {}
+        except Exception:
+            body = {}
+
+    if isinstance(body, dict) and "task" in body:
+        task = body.get("task", "easy")
+
     if task not in ["easy", "medium", "hard"]:
         raise HTTPException(
             status_code=400,
