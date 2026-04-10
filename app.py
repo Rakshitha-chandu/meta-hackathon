@@ -58,11 +58,9 @@ def health():
 
 
 @app.post("/reset")
-def reset(request: Optional[Dict] = Body(None)):
+def reset(request: Dict[str, Any] = Body(default={})):
     """Start a fresh incident episode."""
-    task = "easy"
-    if request and isinstance(request, dict) and "task" in request:
-        task = request["task"]
+    task = request.get("task", "easy") if isinstance(request, dict) else "easy"
     
     if task not in ["easy", "medium", "hard"]:
         raise HTTPException(
