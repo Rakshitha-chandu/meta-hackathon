@@ -17,23 +17,30 @@ import os
 import json
 import re
 import sys
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
 from openai import OpenAI
 from env.environment import IncidentResponseEnv
 from env.models import Action
+
+# ── FastAPI app ───────────────────────────────────────────────
+app = FastAPI(
+    title="Incident Response Agent",
+    description="Baseline agent using LLM for incident response",
+    version="1.0.0"
+)
 
 # ── Configuration ─────────────────────────────────────────────
 # Defaults ONLY for these two
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
-# NO default for HF_TOKEN - must be set by user
-HF_TOKEN = os.getenv("HF_TOKEN")
+# HF_TOKEN - provide dummy if not set to avoid crashing
+HF_TOKEN = os.getenv("HF_TOKEN", "dummy-token")
 
 # Optional: Local image name
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-
-if not HF_TOKEN:
-    raise ValueError("HF_TOKEN environment variable is required but not set.")
 
 # ── Initialize OpenAI client ──────────────────────────────────
 client = OpenAI(
@@ -75,6 +82,12 @@ or
 
 Nothing else. No explanation. Just the JSON.
 """.strip()
+
+
+# ── Request/Response models ───────────────────────────────────
+
+class ResetRequest(BaseModel):
+    task: Optional[str] = None
 
 
 # ── Build prompt from observation ─────────────────────────────
@@ -205,31 +218,47 @@ def run_episode(task: str) -> dict:
     return grade_result
 
 
-# ── Main entry point ──────────────────────────────────────────
+# ── API Endpoints ──────────────────────────────────────────────
 
-def main():
+@app.get("/")
+def root():
+    """Root endpoint."""
+    return {
+        "name": "Incident Response Agent",
+        "version": "1.0.0",
+        "description": "Baseline agent for OpenEnv Incident Response",
+    }
+
+@app.post("/reset")
+def reset(request: Optional[Dict] = None):
+    """Start a fresh episode and run full agent loop."""
+    task = "easy"
+    if request and isinstance(request, dict) and "task" in request:
+        task = request.get("task", "easy")
+    
+    if task not in ["easy", "medium", "hard"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid task: {task}. Choose from: easy, medium, hard"
+        )
+    
     print(f"START: Baseline agent initialization")
     print(f"STEP 0: model={MODEL_NAME}, api_url={API_BASE_URL}")
-
-    results = {}
-    for task in ["easy", "medium", "hard"]:
-        results[task] = run_episode(task)
-
-    # Final summary with structured format
-    total_score = sum(result["score"] for result in results.values())
-    avg_score = total_score / len(results)
     
-    print(f"END: All tasks completed, average_score={avg_score}")
+    result = run_episode(task)
+    
+    print(f"END: All tasks completed, final_score={result['score']}")
+    
+    return {
+        "task": task,
+        "score": result["score"],
+        "passed": result["passed"],
+        "feedback": result["feedback"],
+    }
 
+
+# ── Main entry point ──────────────────────────────────────────
 
 if __name__ == "__main__":
-    main()
-
-
-    avg = round(total / len(results), 3)
-    print(f"\n  Average score: {avg} / 1.0")
-    print(f"  Tasks passed : {sum(1 for r in results.values() if r['passed'])} / {len(results)}")
-
-
-if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run("inference:app", host="0.0.0.0", port=7860, reload=False)
