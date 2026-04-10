@@ -4,7 +4,7 @@ Exposes reset(), step(), state() as HTTP endpoints.
 """
 
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 import uvicorn
 
@@ -25,7 +25,7 @@ sessions: Dict[str, IncidentResponseEnv] = {}
 # ── Request/Response models ───────────────────────────────────
 
 class ResetRequest(BaseModel):
-    task: str = "easy"     # "easy" | "medium" | "hard"
+    task: str = Field(default="easy", description="Task difficulty: easy, medium, or hard")
 
 class StepRequest(BaseModel):
     task: str = "easy"
@@ -54,8 +54,10 @@ def health():
 
 
 @app.post("/reset")
-def reset(task: str = Query(default="easy")):
+def reset(request: Optional[ResetRequest] = None):
     """Start a fresh incident episode."""
+    task = request.task if request else "easy"
+    
     if task not in ["easy", "medium", "hard"]:
         raise HTTPException(
             status_code=400,
