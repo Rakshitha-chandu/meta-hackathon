@@ -19,7 +19,7 @@ from typing import Optional
 # ── Configuration ─────────────────────────────────────────────
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN     = os.getenv("HF_TOKEN", "dummy-token")
+API_KEY      = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN", "dummy-token")
 
 MAX_STEPS   = 10
 TEMPERATURE = 0.2
@@ -29,7 +29,7 @@ client = None
 try:
     client = OpenAI(
         base_url=API_BASE_URL,
-        api_key=HF_TOKEN,
+        api_key=API_KEY,
     )
 except Exception as e:
     print(f"Warning: Could not initialize OpenAI client: {e}")
