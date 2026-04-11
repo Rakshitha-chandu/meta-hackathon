@@ -8,11 +8,11 @@ version = "1.0.0"
 description = "OpenEnv environment for production incident response"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi==0.111.0",
-    "uvicorn==0.29.0",
-    "pydantic==2.7.1",
-    "openai==1.30.1",
-    "python-dotenv==1.0.1",
+    "fastapi>=0.111.0",
+    "uvicorn>=0.29.0",
+    "pydantic>=2.7.1",
+    "openai>=2.7.2",
+    "python-dotenv>=1.0.1",
     "openenv-core>=0.2.0",
 ]
 
