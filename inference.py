@@ -1,30 +1,39 @@
 """
 inference.py — Baseline agent for Incident Response Commander
-Uses OpenAI-compatible client via validator-injected API_BASE_URL and API_KEY.
+Uses OpenAI-compatible client to call Hugging Face Inference API.
 
-Required environment variables (injected by validator):
-    API_BASE_URL   → LiteLLM proxy endpoint
-    API_KEY        → Validator API key
-
-Optional:
-    MODEL_NAME     → Model to use (default: Qwen/Qwen2.5-72B-Instruct)
+Required environment variables:
+    API_BASE_URL   → https://router.huggingface.co/v1
+    MODEL_NAME     → Qwen/Qwen2.5-72B-Instruct
+    HF_TOKEN       → Your Hugging Face API token
 """
 
 import os
 import json
 import re
-import httpx # type: ignore
 from openai import OpenAI # type: ignore
 from env.environment import IncidentResponseEnv
 from env.models import Action
+from typing import Optional
 
-# ── Configuration — safe defaults so module loads without crashing ──
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", "dummy-token"))
+# ── Configuration ─────────────────────────────────────────────
+# Use validator-injected values — NO defaults
+API_BASE_URL = os.environ["API_BASE_URL"]
+API_KEY      = os.environ["API_KEY"]
 MODEL_NAME   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
 MAX_STEPS   = 10
 TEMPERATURE = 0.2
+
+# ── Initialize OpenAI client safely ──────────────────────────
+client = None
+try:
+    client = OpenAI(
+        base_url=API_BASE_URL,
+        api_key=API_KEY,
+    )
+except Exception as e:
+    print(f"Warning: Could not initialize OpenAI client: {e}")
 
 # ── System prompt ─────────────────────────────────────────────
 SYSTEM_PROMPT = """
@@ -112,32 +121,21 @@ def parse_action(response_text: str) -> Action:
 # ── Run one episode ───────────────────────────────────────────
 
 def run_episode(task: str) -> dict:
-    # ── Create client INSIDE function so validator env vars are available ──
-    api_base_url = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
-    api_key      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", "dummy-token"))
-    model_name   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-
-    client = OpenAI(
-    base_url=api_base_url,
-    api_key=api_key,
-    http_client=httpx.Client(verify=False)
-    )
-
     env          = IncidentResponseEnv(task=task, max_steps=MAX_STEPS)
     obs          = env.reset()
     step_history = []
     grade_result = None
-    step         = 0
 
     print(f"[START] task={task}", flush=True)
 
     for step in range(1, MAX_STEPS + 1):
         prompt = build_prompt(obs, step_history)
 
-        # ── LLM call — must go through validator proxy ────────
         try:
+            if client is None:
+                raise Exception("Client not initialized")
             completion = client.chat.completions.create(
-                model=model_name,
+                model=MODEL_NAME,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user",   "content": prompt},
@@ -147,7 +145,7 @@ def run_episode(task: str) -> dict:
             )
             response_text = completion.choices[0].message.content or ""
         except Exception as e:
-            print(f"[WARN] LLM call failed at step {step}: {e}", flush=True)
+            print(f"Warning: LLM call failed: {e}")
             response_text = '{"action": "escalate", "target": "llm_error"}'
 
         action = parse_action(response_text)
@@ -170,7 +168,6 @@ def run_episode(task: str) -> dict:
             grade_result = info.get("grade")
             break
 
-    # Force grade if episode didn't finish naturally
     if not grade_result:
         from env.grader import IncidentGrader
         grader       = IncidentGrader(env._scenario)
@@ -186,27 +183,27 @@ def run_episode(task: str) -> dict:
 # ── Main ──────────────────────────────────────────────────────
 
 def main():
-    print("🚨 Incident Response Commander — Baseline Agent", flush=True)
-    print(f"   Model : {os.environ.get('MODEL_NAME', 'Qwen/Qwen2.5-72B-Instruct')}", flush=True)
-    print(f"   API   : {os.environ.get('API_BASE_URL', 'https://router.huggingface.co/v1')}", flush=True)
+    print("🚨 Incident Response Commander — Baseline Agent")
+    print(f"   Model : {MODEL_NAME}")
+    print(f"   API   : {API_BASE_URL}")
 
     results = {}
     for task in ["easy", "medium", "hard"]:
         results[task] = run_episode(task)
 
-    print("\n" + "="*60, flush=True)
-    print("SUMMARY", flush=True)
-    print("="*60, flush=True)
+    print("\n" + "="*60)
+    print("SUMMARY")
+    print("="*60)
     total = 0
     for task, result in results.items():
         score  = result["score"]
         passed = "✅" if result["passed"] else "❌"
-        print(f"  {task:<10} {passed}  {score} / 1.0", flush=True)
+        print(f"  {task:<10} {passed}  {score} / 1.0")
         total += score
 
     avg = round(total / len(results), 3)
-    print(f"\n  Average score: {avg} / 1.0", flush=True)
-    print(f"  Tasks passed : {sum(1 for r in results.values() if r['passed'])} / {len(results)}", flush=True)
+    print(f"\n  Average score: {avg} / 1.0")
+    print(f"  Tasks passed : {sum(1 for r in results.values() if r['passed'])} / {len(results)}")
 
 
 if __name__ == "__main__":
