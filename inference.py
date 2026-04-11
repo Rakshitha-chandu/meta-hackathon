@@ -1,11 +1,5 @@
 """
 inference.py — Baseline agent for Incident Response Commander
-Uses OpenAI-compatible client to call Hugging Face Inference API.
-
-Required environment variables:
-    API_BASE_URL   → https://router.huggingface.co/v1
-    MODEL_NAME     → Qwen/Qwen2.5-72B-Instruct
-    HF_TOKEN       → Your Hugging Face API token
 """
 
 import os
@@ -14,10 +8,8 @@ import re
 from openai import OpenAI # type: ignore
 from env.environment import IncidentResponseEnv
 from env.models import Action
-from typing import Optional
 
-# ── Configuration ─────────────────────────────────────────────
-# Use validator-injected values — NO defaults
+# Validator injects these — no defaults for API_BASE_URL and API_KEY
 API_BASE_URL = os.environ["API_BASE_URL"]
 API_KEY      = os.environ["API_KEY"]
 MODEL_NAME   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
@@ -25,17 +17,12 @@ MODEL_NAME   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 MAX_STEPS   = 10
 TEMPERATURE = 0.2
 
-# ── Initialize OpenAI client safely ──────────────────────────
-client = None
-try:
-    client = OpenAI(
-        base_url=API_BASE_URL,
-        api_key=API_KEY,
-    )
-except Exception as e:
-    print(f"Warning: Could not initialize OpenAI client: {e}")
+# Initialize client — no try/except, must work
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=API_KEY,
+)
 
-# ── System prompt ─────────────────────────────────────────────
 SYSTEM_PROMPT = """
 You are an expert on-call engineer responding to a production incident.
 Your job is to investigate alerts, find the root cause, fix it, and notify your team.
@@ -68,8 +55,6 @@ Nothing else. No explanation. Just the JSON.
 """.strip()
 
 
-# ── Build prompt from observation ─────────────────────────────
-
 def build_prompt(obs, step_history):
     services_str = "\n".join([
         f"  - {s.name}: status={s.status}, cpu={s.cpu}%, memory={s.memory}%, error_rate={s.error_rate}"
@@ -101,8 +86,6 @@ What is your next action? Respond with JSON only.
 """.strip()
 
 
-# ── Parse LLM response into Action ───────────────────────────
-
 def parse_action(response_text: str) -> Action:
     try:
         match = re.search(r'\{.*?\}', response_text, re.DOTALL)
@@ -118,35 +101,29 @@ def parse_action(response_text: str) -> Action:
     return Action(name="escalate", target="parse_error")
 
 
-# ── Run one episode ───────────────────────────────────────────
-
 def run_episode(task: str) -> dict:
     env          = IncidentResponseEnv(task=task, max_steps=MAX_STEPS)
     obs          = env.reset()
     step_history = []
     grade_result = None
+    step         = 0
 
     print(f"[START] task={task}", flush=True)
 
     for step in range(1, MAX_STEPS + 1):
         prompt = build_prompt(obs, step_history)
 
-        try:
-            if client is None:
-                raise Exception("Client not initialized")
-            completion = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": prompt},
-                ],
-                temperature=TEMPERATURE,
-                max_tokens=100,
-            )
-            response_text = completion.choices[0].message.content or ""
-        except Exception as e:
-            print(f"Warning: LLM call failed: {e}")
-            response_text = '{"action": "escalate", "target": "llm_error"}'
+        # Call LLM — no fallback, must use validator proxy
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user",   "content": prompt},
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=100,
+        )
+        response_text = completion.choices[0].message.content or ""
 
         action = parse_action(response_text)
         obs, reward, done, info = env.step(action)
@@ -180,30 +157,28 @@ def run_episode(task: str) -> dict:
     return grade_result
 
 
-# ── Main ──────────────────────────────────────────────────────
-
 def main():
-    print("🚨 Incident Response Commander — Baseline Agent")
-    print(f"   Model : {MODEL_NAME}")
-    print(f"   API   : {API_BASE_URL}")
+    print("🚨 Incident Response Commander — Baseline Agent", flush=True)
+    print(f"   Model : {MODEL_NAME}", flush=True)
+    print(f"   API   : {API_BASE_URL}", flush=True)
 
     results = {}
     for task in ["easy", "medium", "hard"]:
         results[task] = run_episode(task)
 
-    print("\n" + "="*60)
-    print("SUMMARY")
-    print("="*60)
+    print("\n" + "="*60, flush=True)
+    print("SUMMARY", flush=True)
+    print("="*60, flush=True)
     total = 0
     for task, result in results.items():
         score  = result["score"]
         passed = "✅" if result["passed"] else "❌"
-        print(f"  {task:<10} {passed}  {score} / 1.0")
+        print(f"  {task:<10} {passed}  {score} / 1.0", flush=True)
         total += score
 
     avg = round(total / len(results), 3)
-    print(f"\n  Average score: {avg} / 1.0")
-    print(f"  Tasks passed : {sum(1 for r in results.values() if r['passed'])} / {len(results)}")
+    print(f"\n  Average score: {avg} / 1.0", flush=True)
+    print(f"  Tasks passed : {sum(1 for r in results.values() if r['passed'])} / {len(results)}", flush=True)
 
 
 if __name__ == "__main__":
