@@ -125,7 +125,7 @@ def run_episode(task: str) -> dict:
     step_history = []
     grade_result = None
 
-    print(f"START: Running task={task}")
+    print(f"[START] task={task}", flush=True)
 
     for step in range(1, MAX_STEPS + 1):
         prompt = build_prompt(obs, step_history)
@@ -156,7 +156,7 @@ def run_episode(task: str) -> dict:
         elif action.message:
             action_str += f"(message={action.message})"
 
-        print(f"STEP {step}: action={action_str}, reward={reward.value}, reason={reward.reason}")
+        print(f"[STEP] step={step} action={action_str} reward={reward.value}", flush=True)
 
         step_history.append(
             f"Step {step}: {action.name}({action.target or action.message or ''}) "
@@ -175,7 +175,7 @@ def run_episode(task: str) -> dict:
             resolved=env._scenario.get("resolved", False)
         )
 
-    print(f"END: task={task}, score={grade_result['score']}, passed={grade_result['passed']}")
+    print(f"[END] task={task} score={grade_result['score']} steps={step}", flush=True)
     return grade_result
 
 
