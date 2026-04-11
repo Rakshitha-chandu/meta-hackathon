@@ -13,6 +13,7 @@ Optional:
 import os
 import json
 import re
+import httpx # type: ignore
 from openai import OpenAI # type: ignore
 from env.environment import IncidentResponseEnv
 from env.models import Action
@@ -117,8 +118,9 @@ def run_episode(task: str) -> dict:
     model_name   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
     client = OpenAI(
-        base_url=api_base_url,
-        api_key=api_key,
+    base_url=api_base_url,
+    api_key=api_key,
+    http_client=httpx.Client(verify=False)
     )
 
     env          = IncidentResponseEnv(task=task, max_steps=MAX_STEPS)
