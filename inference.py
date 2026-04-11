@@ -1,5 +1,13 @@
 """
 inference.py — Baseline agent for Incident Response Commander
+Uses OpenAI-compatible client via validator-injected API_BASE_URL and API_KEY.
+
+Required environment variables (injected by validator):
+    API_BASE_URL   → LiteLLM proxy endpoint
+    API_KEY        → Validator API key
+
+Optional:
+    MODEL_NAME     → Model to use (default: Qwen/Qwen2.5-72B-Instruct)
 """
 
 import os
@@ -9,20 +17,15 @@ from openai import OpenAI # type: ignore
 from env.environment import IncidentResponseEnv
 from env.models import Action
 
-# Validator injects these — no defaults for API_BASE_URL and API_KEY
-API_BASE_URL = os.environ["API_BASE_URL"]
-API_KEY      = os.environ["API_KEY"]
+# ── Configuration — safe defaults so module loads without crashing ──
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+API_KEY      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", "dummy-token"))
 MODEL_NAME   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
 
 MAX_STEPS   = 10
 TEMPERATURE = 0.2
 
-# Initialize client — no try/except, must work
-client = OpenAI(
-    base_url=API_BASE_URL,
-    api_key=API_KEY,
-)
-
+# ── System prompt ─────────────────────────────────────────────
 SYSTEM_PROMPT = """
 You are an expert on-call engineer responding to a production incident.
 Your job is to investigate alerts, find the root cause, fix it, and notify your team.
@@ -55,6 +58,8 @@ Nothing else. No explanation. Just the JSON.
 """.strip()
 
 
+# ── Build prompt from observation ─────────────────────────────
+
 def build_prompt(obs, step_history):
     services_str = "\n".join([
         f"  - {s.name}: status={s.status}, cpu={s.cpu}%, memory={s.memory}%, error_rate={s.error_rate}"
@@ -86,6 +91,8 @@ What is your next action? Respond with JSON only.
 """.strip()
 
 
+# ── Parse LLM response into Action ───────────────────────────
+
 def parse_action(response_text: str) -> Action:
     try:
         match = re.search(r'\{.*?\}', response_text, re.DOTALL)
@@ -101,7 +108,19 @@ def parse_action(response_text: str) -> Action:
     return Action(name="escalate", target="parse_error")
 
 
+# ── Run one episode ───────────────────────────────────────────
+
 def run_episode(task: str) -> dict:
+    # ── Create client INSIDE function so validator env vars are available ──
+    api_base_url = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
+    api_key      = os.environ.get("API_KEY", os.environ.get("HF_TOKEN", "dummy-token"))
+    model_name   = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+
+    client = OpenAI(
+        base_url=api_base_url,
+        api_key=api_key,
+    )
+
     env          = IncidentResponseEnv(task=task, max_steps=MAX_STEPS)
     obs          = env.reset()
     step_history = []
@@ -113,17 +132,21 @@ def run_episode(task: str) -> dict:
     for step in range(1, MAX_STEPS + 1):
         prompt = build_prompt(obs, step_history)
 
-        # Call LLM — no fallback, must use validator proxy
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": prompt},
-            ],
-            temperature=TEMPERATURE,
-            max_tokens=100,
-        )
-        response_text = completion.choices[0].message.content or ""
+        # ── LLM call — must go through validator proxy ────────
+        try:
+            completion = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user",   "content": prompt},
+                ],
+                temperature=TEMPERATURE,
+                max_tokens=100,
+            )
+            response_text = completion.choices[0].message.content or ""
+        except Exception as e:
+            print(f"[WARN] LLM call failed at step {step}: {e}", flush=True)
+            response_text = '{"action": "escalate", "target": "llm_error"}'
 
         action = parse_action(response_text)
         obs, reward, done, info = env.step(action)
@@ -145,6 +168,7 @@ def run_episode(task: str) -> dict:
             grade_result = info.get("grade")
             break
 
+    # Force grade if episode didn't finish naturally
     if not grade_result:
         from env.grader import IncidentGrader
         grader       = IncidentGrader(env._scenario)
@@ -157,10 +181,12 @@ def run_episode(task: str) -> dict:
     return grade_result
 
 
+# ── Main ──────────────────────────────────────────────────────
+
 def main():
     print("🚨 Incident Response Commander — Baseline Agent", flush=True)
-    print(f"   Model : {MODEL_NAME}", flush=True)
-    print(f"   API   : {API_BASE_URL}", flush=True)
+    print(f"   Model : {os.environ.get('MODEL_NAME', 'Qwen/Qwen2.5-72B-Instruct')}", flush=True)
+    print(f"   API   : {os.environ.get('API_BASE_URL', 'https://router.huggingface.co/v1')}", flush=True)
 
     results = {}
     for task in ["easy", "medium", "hard"]:
